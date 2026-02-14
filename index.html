@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>JS-Craft: 30-Block Render Distance</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; }
+        #menu-overlay {
+            position: absolute; width: 100%; height: 100%;
+            background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), 
+                        url('https://images.unsplash.com/photo-1627398242454-45a1465c2479?auto=format&fit=crop&q=80&w=1000');
+            background-size: cover; display: flex; flex-direction: column; 
+            align-items: center; justify-content: center; z-index: 100;
+        }
+        #start-btn {
+            padding: 15px 40px; font-size: 20px; color: white; background: #4caf50; 
+            border: 4px solid #2e7d32; cursor: pointer; box-shadow: 0 6px 0 #1b5e20;
+        }
+        #inventory-bar {
+            position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+            display: none; gap: 4px; background: rgba(0,0,0,0.85); padding: 6px;
+            border: 2px solid #333; border-radius: 4px; max-width: 95vw; overflow-x: auto;
+        }
+        .slot {
+            min-width: 38px; height: 38px; border: 2px solid #444;
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-size: 10px; font-weight: bold; flex-shrink: 0;
+        }
+        .slot.selected { border-color: #fff; background: rgba(255,255,255,0.3); transform: scale(1.1); }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 12px; height: 12px;
+            border: 2px solid white; transform: translate(-50%, -50%);
+            pointer-events: none; z-index: 10; display: none;
+        }
+        #status {
+            position: absolute; top: 20px; right: 20px; color: white;
+            background: rgba(0,0,0,0.5); padding: 10px; font-size: 11px; display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="menu-overlay">
+        <h1 style="color:white; font-size: 60px;">JS-CRAFT</h1>
+        <button id="start-btn">START GAME</button>
+    </div>
+
+    <div id="crosshair"></div>
+    <div id="status">
+        <b>RENDER DISTANCE: 30</b><br>
+        G: BREAK | H: PLACE | L: MEGA CUBE<br>
+        Scroll: Inventory | Double-Space: Fly
+    </div>
+    <div id="inventory-bar"></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        // Set fog to match render distance (starts fading at 15, invisible at 30)
+        scene.fog = new THREE.Fog(0x87CEEB, 15, 30);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new PointerLockControls(camera, document.body);
+
+        const startBtn = document.getElementById('start-btn');
+        const overlay = document.getElementById('menu-overlay');
+        const gameUI = [document.getElementById('crosshair'), document.getElementById('inventory-bar'), document.getElementById('status')];
+
+        startBtn.addEventListener('click', () => controls.lock());
+        controls.addEventListener('lock', () => {
+            overlay.style.display = 'none';
+            gameUI.forEach(el => el.style.display = 'flex');
+        });
+
+        // --- 20-Slot Palette ---
+        const palette = [
+            { name: 'WHT', col: 0xffffff }, { name: 'ORG', col: 0xffa500 },
+            { name: 'MAG', col: 0xff00ff }, { name: 'LBL', col: 0xadd8e6 },
+            { name: 'YEL', col: 0xffff00 }, { name: 'LME', col: 0x32cd32 },
+            { name: 'PNK', col: 0xffc0cb }, { name: 'GRY', col: 0x808080 },
+            { name: 'LGR', col: 0xd3d3d3 }, { name: 'CYA', col: 0x00ffff },
+            { name: 'PUR', col: 0x800080 }, { name: 'BLU', col: 0x0000ff },
+            { name: 'BRN', col: 0x8b4513 }, { name: 'GRN', col: 0x008000 },
+            { name: 'RED', col: 0xff0000 }, { name: 'BLK', col: 0x111111 },
+            { name: 'BABY', col: 0xFF00FF, isMob: true }, 
+            { name: 'LOG', col: 0x5d4037 }, { name: 'STN', col: 0x707070 },
+            { name: 'GRS', col: 0x4d903a }
+        ];
+
+        const mats = palette.map(p => new THREE.MeshLambertMaterial({ color: p.col }));
+        let selectedIdx = 0;
+
+        const invBar = document.getElementById('inventory-bar');
+        palette.forEach((p, i) => {
+            const div = document.createElement('div');
+            div.className = `slot ${i === 0 ? 'selected' : ''}`;
+            div.id = `slot-${i}`;
+            div.style.backgroundColor = `#${p.col.toString(16).padStart(6, '0')}`;
+            div.innerText = p.name;
+            invBar.appendChild(div);
+        });
+
+        function updateSelection(newIdx) {
+            document.querySelector('.selected').classList.remove('selected');
+            selectedIdx = (newIdx + palette.length) % palette.length;
+            document.getElementById(`slot-${selectedIdx}`).classList.add('selected');
+        }
+
+        window.addEventListener('wheel', (e) => {
+            if (controls.isLocked) updateSelection(selectedIdx + (e.deltaY > 0 ? 1 : -1));
+        });
+
+        // --- World ---
+        const blocks = [];
+        const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+        const gridSize = 75; 
+        const grassMat = new THREE.MeshLambertMaterial({ color: 0x4d903a });
+
+        for(let x = -gridSize; x < gridSize; x++) {
+            for(let z = -gridSize; z < gridSize; z++) {
+                const mesh = new THREE.Mesh(boxGeo, grassMat);
+                mesh.position.set(x, 0, z);
+                scene.add(mesh);
+                blocks.push(mesh);
+            }
+        }
+
+        const mobs = [];
+        function spawnBaby(x, y, z) {
+            const group = new THREE.Group();
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), mats[2]);
+            head.position.y = 0.6;
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.2), mats[2]);
+            body.position.y = 0.2;
+            group.add(head); group.add(body);
+            group.position.set(x, y + 0.5, z);
+            scene.add(group); mobs.push(group);
+        }
+
+        const raycaster = new THREE.Raycaster();
+        const build = () => {
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const hits = raycaster.intersectObjects(blocks.filter(b => b.visible));
+            if (hits.length > 0) {
+                const pos = hits[0].object.position.clone().add(hits[0].face.normal);
+                if (palette[selectedIdx].isMob) spawnBaby(pos.x, pos.y, pos.z);
+                else {
+                    const b = new THREE.Mesh(boxGeo, mats[selectedIdx]);
+                    b.position.copy(pos);
+                    scene.add(b); blocks.push(b);
+                }
+            }
+        };
+
+        const megaCube = () => {
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const hits = raycaster.intersectObjects(blocks.filter(b => b.visible));
+            if (hits.length > 0) {
+                const startPos = hits[0].object.position.clone().add(hits[0].face.normal);
+                const size = 10;
+                for(let y = 0; y < size; y++) {
+                    for(let x = -size/2; x < size/2; x++) {
+                        for(let z = -size/2; z < size/2; z++) {
+                            const targetPos = new THREE.Vector3(Math.round(startPos.x+x), Math.round(startPos.y+y), Math.round(startPos.z+z));
+                            if(!blocks.some(b => b.position.equals(targetPos))) {
+                                const b = new THREE.Mesh(boxGeo, mats[selectedIdx]);
+                                b.position.copy(targetPos);
+                                scene.add(b); blocks.push(b);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        const destroy = () => {
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const hits = raycaster.intersectObjects(blocks.filter(b => b.visible));
+            if (hits.length > 0 && hits[0].object.position.y > 0) {
+                scene.remove(hits[0].object);
+                blocks.splice(blocks.indexOf(hits[0].object), 1);
+            }
+        };
+
+        scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+        camera.position.set(0, 5, 0);
+        let vel = new THREE.Vector3(), move = { f: false, b: false, l: false, r: false, up: false, down: false };
+        let isFlying = false, lastSpace = 0;
+
+        window.addEventListener('keydown', (e) => {
+            if (!controls.isLocked) return;
+            if (e.code === 'KeyH') build();
+            if (e.code === 'KeyG') destroy();
+            if (e.code === 'KeyL') megaCube();
+            if (e.code === 'KeyW') move.f = true; if (e.code === 'KeyS') move.b = true;
+            if (e.code === 'KeyA') move.l = true; if (e.code === 'KeyD') move.r = true;
+            if (e.code === 'ShiftLeft') move.down = true;
+            if (e.code === 'Space') {
+                move.up = true;
+                if (performance.now() - lastSpace < 300) isFlying = !isFlying;
+                lastSpace = performance.now();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'KeyW') move.f = false; if (e.code === 'KeyS') move.b = false;
+            if (e.code === 'KeyA') move.l = false; if (e.code === 'KeyD') move.r = false;
+            if (e.code === 'Space') move.up = false; if (e.code === 'ShiftLeft') move.down = false;
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (controls.isLocked) {
+                const dt = 0.016;
+                const speed = isFlying ? 40 : 15;
+                vel.x -= vel.x * 10 * dt; vel.z -= vel.z * 10 * dt;
+                if (!isFlying) vel.y -= 9.8 * dt;
+                else {
+                    vel.y -= vel.y * 10 * dt;
+                    if(move.up) vel.y += speed * 5 * dt;
+                    if(move.down) vel.y -= speed * 5 * dt;
+                }
+                const dir = new THREE.Vector3(Number(move.r) - Number(move.l), 0, Number(move.f) - Number(move.b)).normalize();
+                if(move.f || move.b) vel.z -= dir.z * speed * 5 * dt;
+                if(move.l || move.r) vel.x -= dir.x * speed * 5 * dt;
+                controls.moveRight(-vel.x * dt); controls.moveForward(-vel.z * dt);
+                camera.position.y += vel.y * dt;
+                if(!isFlying && camera.position.y < 1.6) { camera.position.y = 1.6; vel.y = 0; }
+
+                // --- RENDER DISTANCE LOGIC ---
+                const renderDist = 30;
+                blocks.forEach(b => {
+                    const dist = b.position.distanceTo(camera.position);
+                    b.visible = dist < renderDist;
+                });
+                
+                mobs.forEach(m => { 
+                    const dist = m.position.distanceTo(camera.position);
+                    m.visible = dist < renderDist;
+                    if(m.visible) {
+                        m.rotation.y += 0.02; 
+                        m.position.y += Math.sin(performance.now() * 0.005) * 0.002; 
+                    }
+                });
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
